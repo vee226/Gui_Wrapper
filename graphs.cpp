@@ -8,6 +8,8 @@
 
 #include "custom_error.h"
 
+#include <algorithm>
+
 #ifndef BENNETT_PARSER_H
 namespace Bennett {
     constexpr double interval = 0.02;
@@ -154,24 +156,43 @@ void shape::plot_2D::Line_Graph::add_point(const Point& point) {
 }
 
 void shape::plot_2D::Line_Graph::add_points(std::initializer_list<Point> points) {
+    if (points.empty()) return;
+
     //batch insertion then sort
     //          O = k + (k+n)log(k+n)
-    for (const Point& p: points) {
-        pts.push_back(p);
-    }
 
     //check for sorted k first then merge and sort
+    //Back insertion
     //          O = 2k + (k+n)(log(k+n)
-    //          for n in 100000s range and k in 5000s range,
-    //          checking adds little cost compare to 100000
-    if (!std::is_sorted(points.begin(), points.end(),
-        [this](const Point& p1, const Point& p2)
-        {return main_ax==axis::x_axis? p1.x()<p2.x() : p1.y()<p2.y();}))
-        {
-        std::sort(pts.begin(), pts.end(),
-            [this](const Point p1, const Point p2)
-            {return main_ax==axis::x_axis? p1.x()<p2.x(): p1.y()<p2.y();});
+    //Front insertion
+    //          O = (k+n)(1+log(k+n)) + k
+    //for n in 100000s range and k in 5000s range with front insertion,
+    //checking adds little overhead compared to 100000 (105000 vs 1785000)
+    auto key = [this](const Point& point) {return main_ax==axis::x_axis? point.x(): point.y();};
+    auto less = [&key](const Point& p1, const Point& p2) {return key(p1)<key(p2);};
+
+    bool batch_is_sorted = std::is_sorted(points.begin(), points.end(), less);
+
+    if (batch_is_sorted && !pts.empty()) {
+        const Point& batch_front = *points.begin(), batch_back = *(points.end()-1);
+
+        //if batch_back < pts.front(), front insertion O = k + n
+        //back insertion with merge_sort = k + (k + n)
+        if (less(batch_back, pts.front())) {
+            pts.insert(pts.begin(), points); return;
+        }
+
+        size_t sf_start = pts.size();
+        pts.insert(pts.end(), points);
+        if (less(pts[sf_start-1], batch_front)) return;     //pts.back() < batch_front, all is good, return!
+        //two sections are separately sorted but not all good (i.e., overlapped)
+        //inplace_merge two consecutive sorted ranges: [first, middle) and [middle, last).
+        //          O(merge_sort) = (n + k)
+        std::inplace_merge(pts.begin(), pts.begin()+sf_start, pts.end(), less);
+        return;
     }
+    pts.insert(pts.end(), points);
+    if (!batch_is_sorted) std::sort(pts.begin(), pts.end(), less);
 }
 
 void shape::plot_2D::Line_Graph::set_axis(axis axis) {
