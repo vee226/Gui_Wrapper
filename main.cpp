@@ -24,11 +24,11 @@ int main(int argc, char* argv[]) {
     using namespace widgets;
 
     //set up data
-    Line_Graph flow{"flow"};
+    plot_2D::Line_Graph flow{"flow"};
     flow.set_style(Qt::black, 2);
-    Line_Graph pressure{"pressure"};
+    plot_2D::Line_Graph pressure{"pressure"};
     pressure.set_style(Qt::black, 2);
-    Line_Graph breath{"breath_number"};
+    plot_2D::Line_Graph breath{"breath_number"};
     std::ifstream ifs{path+input, std::ifstream::in|std::ifstream::binary};
     if (!ifs) {
         return 1;
@@ -50,7 +50,7 @@ int main(int argc, char* argv[]) {
     //set up widget
     const Point flow_stretch{50,1};
     const Point pressure_stretch{50,3};
-    Plot_View plot("Ventilator Plot");
+    plot_2D::Plot_View plot("Ventilator Plot");
     plot.setMinimumSize(400,600);
     QPalette palette;
     palette.setColor(QPalette::Window, Qt::white);
@@ -62,7 +62,7 @@ int main(int argc, char* argv[]) {
     //message box
     Message_Box message_box{};
     message_box.setMaximumSize(200,400);
-    QObject::connect(&plot, &Plot_View::on_mouse_clicked, &message_box, &Message_Box::add_and_update);
+    QObject::connect(&plot, &plot_2D::Plot_View::on_mouse_clicked, &message_box, &Message_Box::add_and_update);
 
     //layout
     QMainWindow* main_window = new QMainWindow();

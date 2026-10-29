@@ -6,8 +6,9 @@
 #include "widgets.h"
 #include "cassert"
 
+#include "custom_error.h"
+
 #ifndef BENNETT_PARSER_H
-#define BENNETT_PARSER_H
 namespace Bennett {
     constexpr double interval = 0.02;
 }
@@ -36,52 +37,155 @@ void shape::Shape::draw(const Point& reference, Painter& la_Peintresse) {
 }
 
 //===========================================================================
-//polyline converts back to ABC with implicit type conversion
-//              constexpr   unique_ptr<T> make_unique( Args&&... args );    (since c++23)
-//                          unique_ptr( unique_ptr&& u ) noexcept;          (since c++23)
-std::unique_ptr<shape::Shape> shape::Polyline::convert_to_ABC() {
-    return std::make_unique<shape::Polyline>(*this);
+//derived of class shape
+//line
+shape::Line::Line(std::initializer_list<Point> points) : Shape{} {
+    if (points.size() > 2) throw custom_error(std::format("Line class: failed initialization with {} points", points.size()));
+
+    for (const Point& p: points) {
+        pts.push_back(p);
+    }
 }
 
+//line::virtuals
+//MEMO      constexpr   unique_ptr<T> make_unique( Args&&... args );    (since c++23)
+//          unique_ptr( unique_ptr&& u ) noexcept;                      (since c++23)
+std::unique_ptr<shape::Shape> shape::Line::convert_to_ABC() {
+    return std::make_unique<Line>(*this);
+}
+void shape::Line::add_point(const Point& point) {
+    if (!check()) {
+        throw custom_error(std::format("Line class: failed add_point: Line already contains {} points", pts.size()));
+    }
+    pts.push_back(point);
+}
+void shape::Line::add_points(std::initializer_list<Point> points) {
+    for (const Point& p: points) {
+        if (check()) pts.push_back(p);
+        else throw custom_error(std::format("Line class: failed add_point: Line already contains {} points", pts.size()));
+    }
+}
+void shape::Line::draw_specific(Painter& la_Peintresse) {
+    la_Peintresse.get_impl()->drawLine(pts[1], pts[2]);
+}
+
+void shape::Line::delete_point(size_t i) {
+    if (i > pts.size()) {
+        throw out_of_range(std::format("Line class: failed delete_point: {} exceeds total {} points stored", i, pts.size()));
+    }
+    pts.erase(pts.begin()+i);
+}
+bool shape::Line::check() {
+    return pts.size() < 2;
+}
+
+
+//polyline
 shape::Polyline::Polyline(std::initializer_list<Point> points) : Shape{ } {
     for (const auto& p: points) this->pts.push_back(p);
 }
 
+//polyline::virtuals
+std::unique_ptr<shape::Shape> shape::Polyline::convert_to_ABC() {
+    return std::make_unique<Polyline>(*this);
+}
 void shape::Polyline::add_points(std::initializer_list<Point> points) {
     for (auto& p: points) {
         pts.push_back(p);
     }
 }
-
 void shape::Polyline::draw_specific(Painter& la_Peintresse) {
     // numeric_limits<int>::max() is 32 bits, if size is exceeded, those naughty users deserve their error.
     la_Peintresse.get_impl()->drawPolyline(pts.data(), pts.size());
 }
 
 //===========================================================================
-//linegraph inherited from polyline
-std::unique_ptr<shape::Shape> shape::Line_Graph::convert_to_ABC() {
-    return std::make_unique<shape::Line_Graph>(*this);
+//line graph inherited from polyline
+std::unique_ptr<shape::Shape> shape::plot_2D::Line_Graph::convert_to_ABC() {
+    return std::make_unique<Line_Graph>(*this);
 }
 
-shape::Line_Graph::Line_Graph(std::initializer_list<Point> points) {
-    for (const auto& p: points) {
-        pts.push_back(p);
+shape::plot_2D::Line_Graph::Line_Graph(const std::string& title, axis orientation): Polyline{title} {
+    using namespace shape::plot_2D;
+    if (!check_axis(orientation)) {
+        throw custom_error("Line_Graph: failed initialization with invalid axis setup");
     }
-    std::sort(pts.begin(), pts.end(),
-        [](const Point& p1, const Point& p2) {return p1.x()<p2.x();});
+}
+shape::plot_2D::Line_Graph::Line_Graph(std::initializer_list<Point> points, axis orientation) : Polyline{points} {
+    main_ax = orientation;
+    if (!check_axis(orientation)) {
+        throw custom_error("Line_Graph: failed initialization with invalid axis setup");
+    }
+
+    auto key = [this](const Point& p1, const Point& p2)
+    {return main_ax==axis::x_axis? p1.x()<p2.x(): p1.y()<p2.y();};
+    if (!std::is_sorted(pts.begin(), pts.end(), key)) {
+        std::sort(pts.begin(), pts.end(), key);
+    }
 }
 
-void shape::Line_Graph::draw_specific(Painter& la_Peintresse) {
-    std::sort(pts.begin(), pts.end(),
-        [](const Point& a, const Point& b) {return a.x()<b.x();});
+void shape::plot_2D::Line_Graph::draw_specific(Painter& la_Peintresse) {
     la_Peintresse.get_impl()->scale(1, y_flip);
     la_Peintresse.get_impl()->drawPolyline(pts.data(), pts.size());
 }
+void shape::plot_2D::Line_Graph::add_point(const Point& point) {
+    //middle insertion with bisection search:
+    //          O(n) = n + log(n)
+    if (pts.empty()) {
+        pts.push_back(point); return;
+    }
 
+    auto key = [this](const Point& p) {return main_ax==axis::x_axis? p.x() : p.y();};
+    double val = key(point);
+    if (val > key(pts.back())) {
+        pts.push_back(point); return;
+    }
+    if (val < key(pts.front())) {
+        pts.insert(pts.begin(), point); return;
+    }
+    //ForwardIt upper_bound( ForwardIt first, ForwardIt last, const T& value, Compare comp );
+    //returns first elements which is ordered after value (i.e., at e > value)
+    //          default:    bool(value < e)
+    //          comp:       bool(comp(value, e))
+    auto iter = std::upper_bound(pts.begin(), pts.end(), val,
+        [&key](double val, const Point& p){return val<key(p);});
+
+    pts.insert(iter, point);        //arbitrary plot for (x1,y1), (x1, y2)
+}
+
+void shape::plot_2D::Line_Graph::add_points(std::initializer_list<Point> points) {
+    //batch insertion then sort
+    //          O = k + (k+n)log(k+n)
+    for (const Point& p: points) {
+        pts.push_back(p);
+    }
+
+    //check for sorted k first then merge and sort
+    //          O = 2k + (k+n)(log(k+n)
+    //          for n in 100000s range and k in 5000s range,
+    //          checking adds little cost compare to 100000
+    if (!std::is_sorted(points.begin(), points.end(),
+        [this](const Point& p1, const Point& p2)
+        {return main_ax==axis::x_axis? p1.x()<p2.x() : p1.y()<p2.y();}))
+        {
+        std::sort(pts.begin(), pts.end(),
+            [this](const Point p1, const Point p2)
+            {return main_ax==axis::x_axis? p1.x()<p2.x(): p1.y()<p2.y();});
+    }
+}
+
+void shape::plot_2D::Line_Graph::set_axis(axis axis) {
+    if (!check_axis(axis)) throw custom_error("Line_Graph: failed set_axis: invalid axis");
+
+    if (main_ax != axis) {
+        auto key = [this](const Point& p1, const Point& p2)
+        {return main_ax==axis::x_axis? p1.x()<p2.x(): p1.y()<p2.y();};
+        std::sort(pts.begin(), pts.end(), key);
+    }
+}
 
 //===========================================================================
-void shape::Plot_View::add_series(Shape&& series, const Point& reference_point, const Point& stretch_factor) {
+void shape::plot_2D::Plot_View::add_series(Shape&& series, const Point& reference_point, const Point& stretch_factor) {
     std::unique_ptr<Shape> s{series.convert_to_ABC()};
     points_repr repr;
     if (s->points().empty()) repr.str = "empty series";
@@ -89,56 +193,60 @@ void shape::Plot_View::add_series(Shape&& series, const Point& reference_point, 
     collections.push_back(std::move(d));
 }
 
-void shape::Plot_View::set_style(size_t i, QColor color, double width, Qt::PenStyle pen_style) {
-    if (i >= collections.size()) throw std::out_of_range("Series index out of range");
+void shape::plot_2D::Plot_View::set_style(size_t i, QColor color, double width, Qt::PenStyle pen_style) {
+    if (i >= collections.size()) throw custom_error("Plot_View: failed set_style: index out of range");
     collections[i].series->set_style(color, width, pen_style);
 }
-void shape::Plot_View::set_style(size_t i, QColor color, Qt::BrushStyle brush_style) {
-    if (i >= collections.size()) throw std::out_of_range("Series index out of range");
+void shape::plot_2D::Plot_View::set_style(size_t i, QColor color, Qt::BrushStyle brush_style) {
+    if (i >= collections.size()) throw custom_error("Plot_View: failed set_style: index out of range");
     collections[i].series->set_style(color, brush_style);
 }
 
-void shape::Plot_View::set_series_title(size_t i, const std::string &title) {
-    if (i >= collections.size()) throw std::out_of_range("Series index out of range");
+void shape::plot_2D::Plot_View::set_series_title(size_t i, const std::string &title) {
+    if (i >= collections.size()) throw custom_error("Plot_View: failed set_series_title: index out of range");
     collections[i].series->set_title(title);
 }
-std::string shape::Plot_View::series_title(size_t i) {
-    if (i >= collections.size()) throw std::out_of_range("Series index out of range");
+std::string shape::plot_2D::Plot_View::series_title(size_t i) {
+    if (i >= collections.size()) throw out_of_range("Plot_View: failed series_title: index out of range");
     return collections[i].series->title();
 }
 
 //repr functions are private and called mainly after draw() and assume sorted state.
-static Point repr_y(const double& x, const std::unique_ptr<shape::Shape>& u_ptr, Point offset, Point stretch) {
+static Point repr(const Point& index_point, const std::unique_ptr<shape::Shape>& u_ptr,
+    const Point& offset, const Point& stretch
+    )
+{
     const auto& data = u_ptr->points();
-    if (data.empty()) throw std::out_of_range("empty series");
-    double t_x = (x-offset.x())/stretch.x();
-    if (t_x < data.front().x()) {
-        return *data.begin();
-    }
-    if (t_x > data.back().x()) return *data.end();
+    if (data.empty()) throw custom_error("Failed repr: cannot get a representation for empty Series\n");
 
-    size_t high = data.size();
-    size_t low = 0;
-    while (low < high) {
-        size_t mid = (high+low)/2;
-        if (data[mid].x() > t_x) high = mid;
-        if (data[mid].x() < t_x) low = mid+1;
-        if (data[mid].x() == t_x) return {t_x, data[mid].y()};
-    }
-    const Point& higher = data[low];
-    const Point& lower = data[low-1];
+    Point idx = index_point-offset;
+    auto* l_ptr = dynamic_cast<shape::plot_2D::Line_Graph*>(u_ptr.get());
+    if (l_ptr) {
+        auto key = [&l_ptr](const Point& point) {
+            return l_ptr->main_axis()==shape::plot_2D::axis::x_axis? point.x(): point.y();
+        };
+        auto val = key(idx)/key(stretch);
+        //std::lower_bound returns first element which is NOT ordered before value
+        //i.e., index at which !(e<v)
+        //          default:    bool(e < value)
+        //          comp:       bool((e, value))
+        auto iter = std::lower_bound(l_ptr->points().begin(), l_ptr->points().end(), val,
+            [&key](const Point& p1, double value) {return key(p1)<value;}
+            );
 
-    auto p = higher.x()-t_x < t_x-lower.x()? higher: lower;
-    //transformed-back value (from position) must be within 0.01 of original 0.02 interval
-    assert(abs(t_x-p.x())<Bennett::interval/2);
-    return {higher.x()-t_x < t_x-lower.x()? higher: lower};
+        if (iter == l_ptr->points().begin()) return l_ptr->points().front();
+        if (iter == l_ptr->points().end()) return l_ptr->points().back();
+        Point p1 = *iter, p2 = *(iter-1);
+        return key(p1)-val < val-key(p2)? p1: p2;
+    }
+    throw invalid_type("Failed repr: cannot get a representation for non Graph objects");
 }
 
 //---------------------------------------------------------------------------
 //events handler
 //plot_view paintEvent
 
-void shape::Plot_View::paintEvent(QPaintEvent *event) {
+void shape::plot_2D::Plot_View::paintEvent(QPaintEvent *event) {
     QPainter impl{this};
 
     //draw each series according to their own rules
@@ -153,23 +261,22 @@ void shape::Plot_View::paintEvent(QPaintEvent *event) {
 
 
 //mouse position and click
-void shape::Plot_View::mouseMoveEvent(QMouseEvent* event) {
+void shape::plot_2D::Plot_View::mouseMoveEvent(QMouseEvent* event) {
     Point mouse_pos{event->position().x(), event->position().y()};
     std::vector<std::string> display_strs;
     for (data_private& data: collections) {
         if (!data.series->points().empty()) {
-            data.repr.value = repr_y(mouse_pos.x(), data.series, data.ref_point-data.series->points()[0],data.stretch);
+            data.repr.value = repr(mouse_pos, data.series, data.ref_point-data.series->points()[0],data.stretch);
 
             //widget-level states
             data.repr.display_at = {mouse_pos.x(),
                 (data.repr.value.y()*y_flip + data.ref_point.y() - data.series->points()[0].y())*data.stretch.y()};
-            // std::cout<<(data.repr.value.y() + (data.ref_point.y() - data.series->points()[0].y()))*y_flip;
             data.repr.str = std::format("({:.3f}, {:.3f}", data.repr.value.x(), data.repr.value.y());
         }
     }
     update();
 }
-void shape::Plot_View::mousePressEvent(QMouseEvent *event) {
+void shape::plot_2D::Plot_View::mousePressEvent(QMouseEvent *event) {
     std::vector<std::string> messages;
     if (event->button() == Qt::LeftButton) {
         for (const auto& data : collections) {
@@ -207,3 +314,6 @@ void widgets::Message_Box::paintEvent(QPaintEvent *event) {
         }
     }
 }
+
+
+//===========================================================================
